@@ -10,7 +10,7 @@ MoCap messages received on topic: '/vicon/X500_v2_IRcam/X500_v2_IRcam'
 PX4 messages published on topic: '/fmu/vehicle_visual_odometry/in'
 
 '''
-
+# MAKE THE VICON RATE TO 50 Hz
 # Standard library imports
 
 
@@ -18,12 +18,13 @@ PX4 messages published on topic: '/fmu/vehicle_visual_odometry/in'
 # Third-party imports
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 
 from px4_msgs.msg import TimesyncStatus
 from px4_msgs.msg import VehicleOdometry
 
 from vicon_receiver.msg import Position
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from numpy import NaN
 
@@ -31,21 +32,31 @@ from numpy import NaN
 class MoCapPubSub(Node):
 
     # Pubsub constructor
-    def __init__(self):
-        super().__init__('px4_mocap_pubsub') # Initialize node
+    def __init__(self, id: str):
+        super().__init__(f'px4_mocap_pubsub_{id}') # Initialize node # ADDED f AND id 
+
+        # Added qos_profile
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
 
         # Initialize subscriber to mocap(VICON) topic
         self.mocap_sub = self.create_subscription(Position, 
-            '/vicon/Brian_X500/Brian_X500', self.mocap_callback, 10)
+            f'/vicon/{id}/{id}', self.mocap_callback, QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1))
 
         # Initialize subscriber to PX4 timesync topic
-        self.timesync_sub = self.create_subscription(TimesyncStatus, 
-            "/fmu/out/timesync_status", self.timesync_callback, 10)
+        self.timesync_sub = self.create_subscription(TimesyncStatus, f"/{id}/fmu/out/timesync_status", self.timesync_callback, qos_profile)
+        # self.timesync_sub = self.create_subscription(TimesyncStatus, f"/fmu/out/timesync_status", self.timesync_callback, qos_profile)
+            # f"/fmu/out/timesync_status", self.timesync_callback, qos_profile)
         self.timesync = 0
 
         # Initialize publisher to PX4 vehicle_visual_odometry topic
-        self.mocap_pub = self.create_publisher(VehicleOdometry, 
-            '/fmu/in/vehicle_visual_odometry', 10)
+        self.mocap_pub = self.create_publisher(VehicleOdometry, f'/{id}/fmu/in/vehicle_visual_odometry', qos_profile)
+        # self.mocap_pub = self.create_publisher(VehicleOdometry, f'/fmu/in/vehicle_visual_odometry', qos_profile)
+            # f'/fmu/in/vehicle_visual_odometry', qos_profile)
 
         self.get_logger().info("PX4 mocap pub-sub node initialized")
 
@@ -87,10 +98,15 @@ class MoCapPubSub(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    px4_mocap_pubsub = MoCapPubSub()
+    executor = MultiThreadedExecutor()
+    dummy_node = Node("_dummy_node_for_topics_pubsub")
 
-    rclpy.spin(px4_mocap_pubsub)
-
+    for topic in dummy_node.get_topic_names_and_types():
+        if topic[0].startswith('/vicon'):
+            id = topic[0].split('/')[2]
+            executor.add_node(MoCapPubSub(id))
+    # rclpy.spin(MoCapPubSub)
+    executor.spin()
     rclpy.shutdown()
 
 if __name__ == '__main__':
